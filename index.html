@@ -2065,12 +2065,19 @@ function showSaveIndicator(){
 
 
 // ── CUSTOM CONFIRM MODAL ───────────────────────────────────────────
-function showConfirmModal(title, msg, btnLabel, onConfirm){
-  document.getElementById('confirmTitle').textContent=title;
-  document.getElementById('confirmMsg').textContent=msg||'';
-  var btn=document.getElementById('confirmOkBtn');
-  btn.textContent=btnLabel||'Confirmar';
-  btn.onclick=function(){closeModal('confirmModal');onConfirm();};
+function showConfirmModal(title, msg, onConfirmOrLabel, onConfirmFn){
+  // Supports both 3-param (title, msg, fn) and 4-param (title, msg, label, fn)
+  var label, fn;
+  if(typeof onConfirmOrLabel === 'function'){
+    label = 'Confirmar'; fn = onConfirmOrLabel;
+  } else {
+    label = onConfirmOrLabel || 'Confirmar'; fn = onConfirmFn;
+  }
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmMsg').textContent = msg || '';
+  var btn = document.getElementById('confirmOkBtn');
+  btn.textContent = label;
+  btn.onclick = function(){ closeModal('confirmModal'); if(typeof fn==='function') fn(); };
   document.getElementById('confirmModal').classList.add('on');
 }
 // ── AUDIT LOG ─────────────────────────────────────────────────────
@@ -2220,7 +2227,11 @@ function renderReport(bat){
   // Element summary
   var eleSummary='';
   if(an.def.length+an.obs.length===0){
-    eleSummary='<div class="ata-all-ok">✓ Todos os '+nE+' elementos dentro dos parâmetros. Média: '+(media?Math.round(media):'—')+'</div>';
+    if(media===null){
+    eleSummary='<div style="color:#666;font-size:13px;padding:8px 0">Nenhuma leitura de densidade registrada ainda.</div>';
+  } else {
+    eleSummary='<div class="ata-all-ok">✓ Todos os '+nE+' elementos dentro dos parâmetros. Média: '+Math.round(media)+'</div>';
+  }
   } else {
     eleSummary='<table class="ata-ele-tbl"><thead><tr><th>Ele.</th><th>Dens. (última)</th><th>Desvio da média</th><th>Situação</th><th>Leituras</th></tr></thead><tbody>';
     an.def.concat(an.obs).forEach(function(item){
@@ -2378,7 +2389,7 @@ function gerarPDF(){
   ck(18); sec((bat.pausas&&bat.pausas.length?'5':'4'),'Resumo de Elementos com Problema');
   if(an.def.length+an.obs.length===0){
     ck(12);doc.setFillColor(240,253,244);doc.rect(ML,y,TW,10,'F');doc.setDrawColor(134,239,172);doc.setLineWidth(0.4);doc.rect(ML,y,TW,10,'S');
-    doc.setTextColor(22,101,52);doc.setFont('helvetica','bold');doc.setFontSize(10);doc.text('✓  Todos os '+nE+' elementos dentro dos parâmetros. Média: '+(media?Math.round(media):'—')+'',ML+4,y+6.5);y+=15;
+    doc.setTextColor(22,101,52);doc.setFont('helvetica','bold');doc.setFontSize(10);doc.text(media===null?'Nenhuma leitura registrada.':'Todos os '+nE+' elementos OK. Media: '+String(media?Math.round(media):'—'),ML+4,y+6.5);y+=15;
   } else {
     var eh=[{header:'Ele.',dataKey:'n'},{header:'Dens.',dataKey:'d'},{header:'Desvio',dataKey:'dv'},{header:'Situação',dataKey:'s'},{header:'Leituras',dataKey:'l'}];
         var er=an.def.concat(an.obs).map(function(item){
