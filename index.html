@@ -264,9 +264,34 @@ table.ata-tbl tr.media-row td{background:#f0f4ff!important;color:#1e3a8a;font-we
   .ata-foot{border-top:1px solid #ddd!important;margin-top:16px!important}
 }
 }
+
+/* App shell hidden until login */
+#appShell{display:none!important;visibility:hidden!important;pointer-events:none!important}
 </style>
 </head>
 <body>
+
+<!-- LOGIN SCREEN -->
+<div id="loginScreen" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#0f0f0f;z-index:99999;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:16px;pointer-events:all;">
+  <div style="background:#181818;border:1px solid #333;border-radius:12px;padding:40px 36px;width:100%;max-width:360px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.9);font-family:'IBM Plex Sans',sans-serif;">
+    <div style="font-family:'IBM Plex Mono',monospace;font-size:28px;font-weight:700;color:#f59e0b;letter-spacing:.08em;margin-bottom:4px">AWM</div>
+    <div style="font-size:11px;color:#555;letter-spacing:.12em;text-transform:uppercase;margin-bottom:32px">Controle de Descarga</div>
+    <div style="position:relative;margin-bottom:14px;">
+      <input type="password" id="loginPwd" placeholder="Senha" maxlength="20"
+        style="width:100%;background:#252525;border:1px solid #444;border-radius:6px;color:#e8e8e8;padding:13px 44px 13px 14px;font-size:16px;font-family:'IBM Plex Mono',monospace;letter-spacing:.2em;text-align:center;box-sizing:border-box;outline:none;"
+        onkeydown="if(event.key==='Enter')doLogin()"
+        onfocus="this.style.borderColor='#f59e0b'"
+        onblur="this.style.borderColor='#444'"
+        oninput="this.style.borderColor='#f59e0b';document.getElementById('loginErr').style.display='none'">
+      <button onclick="toggleLoginPwd()" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:#666;cursor:pointer;font-size:16px;padding:4px;">👁</button>
+    </div>
+    <button onclick="doLogin()" style="width:100%;padding:13px;background:#f59e0b;border:none;border-radius:6px;color:#000;font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer;">Entrar</button>
+    <div id="loginErr" style="color:#ef4444;font-size:12px;font-family:'IBM Plex Mono',monospace;margin-top:10px;display:none;">Senha incorreta</div>
+    <div style="margin-top:28px;font-size:11px;color:#333;">AWM Manutenções Elétricas Ltda ME</div>
+  </div>
+</div>
+
+<div id="appShell">
 <div id="toast"></div>
 <div class="hdr">
   <div class="logo">AWM <small>/ Controle de Descarga</small></div>
@@ -642,6 +667,54 @@ table.ata-tbl tr.media-row td{background:#f0f4ff!important;color:#1e3a8a;font-we
 </div>
 
 <script>
+
+// ── LOGIN ─────────────────────────────────────────────────────────
+var _PWD_HASH = 'e37cf9342b0232783b6d0707e9328acf321c4f2878a054cad43f2bfb82fb8ec8';
+function _sha256(str){
+  // Simple check: compare against stored hash using SubtleCrypto if available
+  // Fallback: compare reversed base64 obfuscation
+  return crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
+    .then(function(buf){
+      return Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+    });
+}
+function doLogin(){
+  var pwd = document.getElementById('loginPwd').value;
+  _sha256(pwd).then(function(hash){
+    if(hash === _PWD_HASH){
+      document.getElementById('loginScreen').style.display='none';
+      var _shell=document.getElementById('appShell');_shell.style.setProperty('display','block','important');_shell.style.visibility='visible';_shell.style.pointerEvents='auto';
+      sessionStorage.setItem('awm_auth',Date.now().toString());
+      if(typeof window.__bootApp === 'function') window.__bootApp();
+    } else {
+      document.getElementById('loginPwd').classList.add('err');
+      document.getElementById('loginErr').style.display='block';
+      document.getElementById('loginPwd').value='';
+      document.getElementById('loginPwd').focus();
+    }
+  });
+}
+function toggleLoginPwd(){
+  var inp=document.getElementById('loginPwd');
+  inp.type=inp.type==='password'?'text':'password';
+}
+// Auto-login if already authenticated this session
+var _authTs=parseInt(sessionStorage.getItem('awm_auth')||'0');if(_authTs>0&&(Date.now()-_authTs)<8*60*60*1000){// 8h session
+  document.addEventListener('DOMContentLoaded',function(){
+    var ls=document.getElementById('loginScreen');
+    if(ls) ls.style.display='none';
+    var shell=document.getElementById('appShell');
+    if(shell) shell.style.display='block';
+    if(typeof window.__bootApp === 'function') window.__bootApp();
+  });
+} else {
+  document.addEventListener('DOMContentLoaded',function(){
+    var inp=document.getElementById('loginPwd');
+    if(inp) inp.focus();
+  });
+}
+
+
 // ── CONSTANTS ──────────────────────────────────────────────────────
 var GRACE=10*60000, WARN=10*60000;
 var PIN_CORRETO='4004';
@@ -807,12 +880,18 @@ function gTab(id){
 // ── PANEL ──────────────────────────────────────────────────────────
 function openPanel(){document.getElementById('panel').classList.add('on');document.getElementById('pback').classList.add('on');_dirty=false;}
 function reqClose(){
-  // New OS with nothing filled → close silently, no confirm needed
-  if(cur && cur._isNew && !cur.identConfirmed){
-    var hasAny=(cur.os||cur.marca||cur.serie||cur.cliente||'').trim();
+  // Brand new OS with absolutely nothing filled → close silently
+  if(cur && cur._isNew && !cur.identConfirmed && !_dirty){
+    var hasAny=((cur.os||'')+(cur.marca||'')+(cur.serie||'')+(cur.cliente||'')).trim();
     if(!hasAny){ _doClose(); return; }
   }
-  _dirty?document.getElementById('cfMod').classList.add('on'):_doClose();
+  // Has unsaved changes → ask
+  if(_dirty){
+    document.getElementById('cfMod').classList.add('on');
+    return;
+  }
+  // Existing confirmed OS with no unsaved changes → close directly
+  _doClose();
 }
 function forceClose(){closeModal('cfMod');_doClose();}
 function saveAndClose(){salvar();closeModal('cfMod');_doClose();}
@@ -2569,5 +2648,6 @@ window.__bootApp = function(){
   <div><b style="color:var(--tx)">Esc</b> Fechar</div>
   <div><b style="color:var(--tx)">Ctrl+S</b> Salvar</div>
 </div>
-</body>
+
+</div></body>
 </html>
