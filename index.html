@@ -2702,7 +2702,7 @@ window.__bootApp = function(){
   if(!db.orders) db.orders=[];
   if(!db.emails) db.emails=[];
   if(!db.tecnicos) db.tecnicos=[];
-  if(!db.regimes) db.regimes=[];
+  if(!db.regimes||!db.regimes.length) db.regimes=DEFAULT_REGIMES.slice();
   document.getElementById('fData').value=new Date().toISOString().split('T')[0];
   buildTempoSelect(); onTensao();
   renderDash();
