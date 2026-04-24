@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>AWM — Controle de Descarga</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -82,26 +82,62 @@ body{font-family:var(--sans);background:var(--bg);color:var(--tx);min-height:100
 .fg2{grid-template-columns:1fr 1fr}.fg3{grid-template-columns:1fr 1fr 1fr}.fg4{grid-template-columns:1fr 1fr 1fr 1fr}.fg5{grid-template-columns:repeat(5,1fr)}
 @media(max-width:600px){
   .fg2,.fg3,.fg4,.fg5{grid-template-columns:1fr 1fr}
-  .sumrow{grid-template-columns:1fr 1fr}
-  .shell{padding:12px 10px 60px}
+  .sumrow{grid-template-columns:repeat(3,1fr)}
+  .shell{padding:10px 8px 70px}
   .panel{width:100vw}
   .phdr,.pfooter{padding:10px 12px}
-  .tabs{padding:0 10px}
-  .tab{padding:8px 10px;font-size:10px}
+  .tabs{padding:0 8px;overflow-x:auto;flex-wrap:nowrap}
+  .tab{padding:8px 10px;font-size:10px;white-space:nowrap;flex-shrink:0}
+  /* Dashboard cards */
+  .bh{padding:10px 12px;gap:8px}
+  .bid{font-size:12px}
+  .bsub{font-size:11px}
+  /* Panel full screen on mobile */
+  .pbody{padding:12px}
+  .card{padding:12px}
+  /* Table horizontal scroll */
+  .dtwrap{font-size:11px}
+  input.cell{width:50px;font-size:11px}
+  /* Buttons */
+  .btn{padding:7px 12px;font-size:11px}
+  .btn.sm{padding:5px 9px;font-size:10px}
+  /* Hide storage bar on mobile */
+  #storageBarWrap{display:none!important}
+  /* Done grid single col on mobile */
+  #gDone{grid-template-columns:1fr!important}
 }
 @media(max-width:420px){
   .fg2,.fg3,.fg4,.fg5{grid-template-columns:1fr}
   .sumrow{grid-template-columns:1fr 1fr}
   .sc-n{font-size:20px}
   .sc-l{font-size:9px}
-  .bid{font-size:12px}
-  .bsub{font-size:11px}
+  /* Bigger touch targets */
+  input,select{padding:10px 12px;font-size:14px}
+  .rbtn{padding:8px 14px;font-size:12px}
+  /* Panel header compact */
+  .phdr{flex-direction:column;align-items:flex-start;gap:6px}
+  .ptitle{font-size:12px}
+  /* Table */
+  table.dt th{padding:3px 4px;font-size:9px}
+  table.dt td{padding:1px}
+  input.cell{width:44px;font-size:10px;padding:3px 1px}
 }
 @media(min-width:601px) and (max-width:900px){
   .fg4{grid-template-columns:1fr 1fr 1fr}
   .fg5{grid-template-columns:1fr 1fr 1fr}
   .panel{width:min(100vw,760px)}
   .sumrow{grid-template-columns:repeat(3,1fr)}
+}
+/* Touch devices — bigger targets */
+@media(hover:none) and (pointer:coarse){
+  .btn{min-height:40px;padding:8px 16px}
+  .btn.sm{min-height:34px;padding:6px 12px}
+  .rbtn{min-height:36px;padding:7px 14px}
+  input,select{min-height:40px;font-size:16px}/* prevents iOS zoom */
+  .tab{padding:10px 14px}
+  input.cell{min-height:32px}
+  /* Scroll-friendly table */
+  .dtwrap{-webkit-overflow-scrolling:touch}
 }
 .field{display:flex;flex-direction:column;gap:3px}
 .field label{font-size:10px;color:var(--mu);letter-spacing:.06em;text-transform:uppercase}
@@ -333,16 +369,29 @@ table.ata-tbl tr.media-row td{background:#f0f4ff!important;color:#1e3a8a;font-we
       <div class="bg" id="gQueue"></div>
     </div>
     <div id="gDoneSec" style="display:none">
-      <div class="sec-lbl">Finalizadas</div>
-      <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
-        <label style="font-size:10px;color:var(--mu);letter-spacing:.06em;text-transform:uppercase">Filtrar:</label>
-        <select id="fltMes" onchange="renderDash()" style="width:auto;min-width:140px"></select>
-        <select id="fltTec" onchange="renderDash()" style="width:auto;min-width:140px"></select>
-        <input id="fltBusca" oninput="renderDash()" placeholder="Buscar por OS, cliente, série..." style="flex:1;min-width:180px" />
-        <span id="fltCount" style="font-family:var(--mono);font-size:11px;color:var(--mu)"></span>
-        <button class="btn sm am" onclick="exportarFinalizadasCSV()">⬇ Exportar Excel/CSV</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--b1)">
+        <div style="font-family:var(--mono);font-size:11px;font-weight:600;color:var(--am);letter-spacing:.1em;text-transform:uppercase">Finalizadas <span id="fltCount" style="color:var(--mu);font-weight:400"></span></div>
+        <button class="btn sm am" onclick="exportarFinalizadasCSV()">⬇ Excel/CSV</button>
       </div>
-      <div class="bg" id="gDone"></div>
+      <!-- Filters row -->
+      <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+        <div style="flex:1;min-width:180px;position:relative">
+          <input id="fltBusca" oninput="renderDash()" placeholder="🔍 Buscar OS, cliente, marca, série..."
+            style="width:100%;padding-right:28px" />
+          <button onclick="document.getElementById('fltBusca').value='';renderDash()" 
+            style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--mu);cursor:pointer;font-size:12px;padding:0">✕</button>
+        </div>
+        <select id="fltMes" onchange="renderDash()" style="width:auto;min-width:130px"></select>
+        <select id="fltTec" onchange="renderDash()" style="width:auto;min-width:130px"></select>
+        <select id="fltStatus" onchange="renderDash()" style="width:auto;min-width:120px">
+          <option value="">Todos os status</option>
+          <option value="ok">✅ Sem problemas</option>
+          <option value="prob">⚠️ Com defeito/obs</option>
+        </select>
+        <button class="btn sm" onclick="clearFltDone()">✕ Limpar</button>
+      </div>
+      <!-- Results grid -->
+      <div id="gDone" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px"></div>
     </div>
   </div>
   <div class="sec" id="te">
@@ -992,6 +1041,52 @@ function _matchSearch(o){
   if(!q) return true;
   return ((o.os||'')+(o.cliente||'')+(o.marca||'')+(o.serie||'')).toLowerCase().indexOf(q)>=0;
 }
+
+function mkDoneCard(bat){
+  var an=analyze(bat);
+  var t0=bat.readings&&bat.readings[0]&&bat.readings[0].ts?+new Date(bat.readings[0].ts):null;
+  var tLast=null;(bat.readings||[]).forEach(function(r){if(r.ts)tLast=+new Date(r.ts);});
+  var totalMin=t0&&tLast?Math.round(((tLast-t0)-totalPausaMs(bat))/60000):null;
+  var reg=db.regimes.find(function(r){return r.nome===bat.tempo;})||{};
+  var tempoMaxMin=(reg.duracaoH||5)*60;
+  var overTime=totalMin!==null&&totalMin>tempoMaxMin+10;
+  var hasDef=an.def.length>0, hasObs=an.obs.length>0;
+  var statusColor=hasDef?'var(--rd)':hasObs?'var(--yl)':'var(--gn)';
+  var statusLabel=hasDef?an.def.length+' defeito(s)':hasObs?an.obs.length+' obs.':'OK';
+  var statusIcon=hasDef?'⚠':'✓';
+  var techs=[...new Set((bat.readings||[]).filter(function(r){return r.tecnico;}).map(function(r){return r.tecnico;}))].join(', ');
+  var el=document.createElement('div');
+  el.style.cssText='background:var(--sf);border:1px solid var(--b1);border-radius:var(--r2);overflow:hidden;cursor:pointer;transition:border-color .15s;';
+  el.onmouseenter=function(){el.style.borderColor='var(--am)';};
+  el.onmouseleave=function(){el.style.borderColor='var(--b1)';};
+  el.onclick=function(){openEdit(bat.id);};
+  el.innerHTML=
+    '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--sf2);">'+
+      '<div style="font-family:var(--mono);font-size:13px;font-weight:700;color:var(--am)">OS '+bat.os+'</div>'+
+      '<div style="font-family:var(--mono);font-size:11px;font-weight:700;color:'+statusColor+'">'+statusIcon+' '+statusLabel+'</div>'+
+    '</div>'+
+    '<div style="padding:10px 12px;">'+
+      '<div style="font-size:12px;font-weight:600;margin-bottom:4px">'+(bat.cliente||'—')+'</div>'+
+      '<div style="font-size:11px;color:var(--mu);margin-bottom:6px">'+(bat.marca||'—')+' · '+(bat.serie||'—')+'</div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
+        '<span style="font-family:var(--mono);font-size:10px;background:var(--sf3);padding:2px 7px;border-radius:3px">'+(bat.tensao||'?')+'V</span>'+
+        '<span style="font-family:var(--mono);font-size:10px;background:var(--sf3);padding:2px 7px;border-radius:3px">'+(bat.tempo||'?')+'</span>'+
+        (overTime?'<span style="font-family:var(--mono);font-size:10px;background:var(--rd-bg);color:var(--rd);padding:2px 7px;border-radius:3px">⏱ Atrasou</span>':'')+
+        '<span style="font-size:10px;color:var(--mu);margin-left:auto">'+(bat.data||'')+'</span>'+
+      '</div>'+
+      (techs?'<div style="font-size:10px;color:var(--mu);margin-top:4px">👤 '+techs+'</div>':'')+
+    '</div>'+
+    '<div style="padding:0 12px 10px;display:flex;gap:6px">'+
+      '<button class="btn sm am" style="flex:1" onclick="event.stopPropagation();openEdit(\''+bat.id+'\');">Abrir</button>'+
+      '<button class="btn sm rd" onclick="event.stopPropagation();confirmDelete(\''+bat.id+'\');" title="Excluir">🗑</button>'+
+    '</div>';
+  return el;
+}
+function clearFltDone(){
+  var els=['fltBusca','fltMes','fltTec','fltStatus'];
+  els.forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});
+  renderDash();
+}
 function renderDash(){
   var queue=db.orders.filter(function(o){return overSt(o)==='queue'&&_matchSearch(o);});
   // search handled by global _matchSearch()
@@ -1036,9 +1131,12 @@ function renderDash(){
       return '<option value="'+t+'"'+(t===curTec?' selected':'')+'>'+t+' ('+tecs[t]+')</option>';
     }).join('');
     var fM=fMes.value, fT=fTec.value, fB=(fBus.value||'').trim().toLowerCase();
+    var fS=(document.getElementById('fltStatus')||{}).value||'';
     var filtered=done.filter(function(b){
       if(fM && (!b.data || b.data.substring(0,7)!==fM)) return false;
       if(fT && !(b.readings||[]).some(function(r){return r.tecnico===fT;})) return false;
+      if(fS==='ok'){var _a=analyze(b);if(_a.def.length+_a.obs.length>0)return false;}
+      if(fS==='prob'){var _a=analyze(b);if(_a.def.length+_a.obs.length===0)return false;}
       if(fB){
         var hay=((b.os||'')+' '+(b.cliente||'')+' '+(b.serie||'')+' '+(b.marca||'')).toLowerCase();
         if(hay.indexOf(fB)===-1) return false;
@@ -1049,10 +1147,10 @@ function renderDash(){
     document.getElementById('fltCount').textContent=filtered.length+' de '+done.length;
     var gs=document.getElementById('gDone'); gs.innerHTML='';
     if(!filtered.length) gs.innerHTML='<div class="empty">Nenhuma bateria corresponde aos filtros.</div>';
-    else filtered.forEach(function(b){gs.appendChild(mkCard(b));});
+    else filtered.forEach(function(b){gs.appendChild(mkDoneCard(b));});
   } else {
     var gs2=document.getElementById('gDone'); gs2.innerHTML='';
-    done.forEach(function(b){gs2.appendChild(mkCard(b));});
+    done.forEach(function(b){gs2.appendChild(mkDoneCard(b));});
   }
   var gqSec=document.getElementById('gQueueSec');if(gqSec)gqSec.style.display=queue.length?'':'none';
   var gq=document.getElementById('gQueue');if(gq){gq.innerHTML='';queue.forEach(function(b){gq.appendChild(mkCard(b));});}
