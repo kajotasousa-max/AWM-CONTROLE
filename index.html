@@ -5,6 +5,57 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <title>AWM — Controle de Descarga</title>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<!-- Firebase SDK -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+  import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAOE-VUWSN-4XDUhflCiRr8-Ew2RazyH1I",
+    authDomain: "cont-de-processo.firebaseapp.com",
+    projectId: "cont-de-processo",
+    storageBucket: "cont-de-processo.firebasestorage.app",
+    messagingSenderId: "565715240245",
+    appId: "1:565715240245:web:d6ba991e95759c597df87c"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db_fire = getFirestore(app);
+
+  // Expõe globalmente para o código legado
+  window._fbAuth = auth;
+  window._fbDb = db_fire;
+  window._fbDoc = doc;
+  window._fbSetDoc = setDoc;
+  window._fbOnSnapshot = onSnapshot;
+  window._fbGetDoc = getDoc;
+  window._fbSignOut = signOut;
+  window._fbSignIn = signInWithEmailAndPassword;
+
+  // Observa estado de autenticação
+  onAuthStateChanged(auth, function(user) {
+    if (user) {
+      // Usuário autenticado — esconde login, mostra app
+      window._fbCurrentUser = user;
+      var ls = document.getElementById('loginScreen');
+      if (ls) ls.style.display = 'none';
+      var shell = document.getElementById('appShell');
+      if (shell) { shell.style.setProperty('display','block','important'); shell.style.visibility='visible'; shell.style.pointerEvents='auto'; }
+      // Inicia listener de dados em tempo real
+      window._startFirestoreSync && window._startFirestoreSync();
+      if (typeof window.__bootApp === 'function') window.__bootApp();
+    } else {
+      // Não autenticado — mostra tela de login
+      window._fbCurrentUser = null;
+      var ls = document.getElementById('loginScreen');
+      if (ls) ls.style.display = 'flex';
+      var shell = document.getElementById('appShell');
+      if (shell) { shell.style.setProperty('display','none','important'); }
+    }
+  });
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -333,17 +384,27 @@ table.ata-tbl tr.media-row td{background:#f0f4ff!important;color:#1e3a8a;font-we
   <div style="background:#181818;border:1px solid #333;border-radius:12px;padding:40px 36px;width:100%;max-width:360px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.9);font-family:'IBM Plex Sans',sans-serif;">
     <div style="font-family:'IBM Plex Mono',monospace;font-size:28px;font-weight:700;color:#f59e0b;letter-spacing:.08em;margin-bottom:4px">AWM</div>
     <div style="font-size:11px;color:#555;letter-spacing:.12em;text-transform:uppercase;margin-bottom:32px">Controle de Descarga</div>
+    <!-- Campo e-mail -->
+    <div style="margin-bottom:10px;">
+      <input type="email" id="loginEmail" placeholder="E-mail" autocomplete="username"
+        style="width:100%;background:#252525;border:1px solid #444;border-radius:6px;color:#e8e8e8;padding:13px 14px;font-size:15px;font-family:'IBM Plex Sans',sans-serif;box-sizing:border-box;outline:none;"
+        onkeydown="if(event.key==='Enter')document.getElementById('loginPwd').focus()"
+        onfocus="this.style.borderColor='#f59e0b'"
+        onblur="this.style.borderColor='#444'"
+        oninput="this.style.borderColor='#f59e0b';document.getElementById('loginErr').style.display='none'">
+    </div>
+    <!-- Campo senha -->
     <div style="position:relative;margin-bottom:14px;">
-      <input type="password" id="loginPwd" placeholder="Senha" maxlength="20"
-        style="width:100%;background:#252525;border:1px solid #444;border-radius:6px;color:#e8e8e8;padding:13px 44px 13px 14px;font-size:16px;font-family:'IBM Plex Mono',monospace;letter-spacing:.2em;text-align:center;box-sizing:border-box;outline:none;"
+      <input type="password" id="loginPwd" placeholder="Senha" maxlength="60" autocomplete="current-password"
+        style="width:100%;background:#252525;border:1px solid #444;border-radius:6px;color:#e8e8e8;padding:13px 44px 13px 14px;font-size:15px;font-family:'IBM Plex Sans',sans-serif;box-sizing:border-box;outline:none;"
         onkeydown="if(event.key==='Enter')doLogin()"
         onfocus="this.style.borderColor='#f59e0b'"
         onblur="this.style.borderColor='#444'"
         oninput="this.style.borderColor='#f59e0b';document.getElementById('loginErr').style.display='none'">
       <button onclick="toggleLoginPwd()" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:#666;cursor:pointer;font-size:16px;padding:4px;">👁</button>
     </div>
-    <button onclick="doLogin()" style="width:100%;padding:13px;background:#f59e0b;border:none;border-radius:6px;color:#000;font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer;">Entrar</button>
-    <div id="loginErr" style="color:#ef4444;font-size:12px;font-family:'IBM Plex Mono',monospace;margin-top:10px;display:none;">Senha incorreta</div>
+    <button onclick="doLogin()" id="loginBtn" style="width:100%;padding:13px;background:#f59e0b;border:none;border-radius:6px;color:#000;font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:700;letter-spacing:.08em;cursor:pointer;">Entrar</button>
+    <div id="loginErr" style="color:#ef4444;font-size:12px;font-family:'IBM Plex Mono',monospace;margin-top:10px;display:none;">E-mail ou senha incorretos</div>
     <div style="margin-top:28px;font-size:11px;color:#333;">AWM Manutenções Elétricas Ltda ME</div>
   </div>
 </div>
@@ -754,50 +815,41 @@ table.ata-tbl tr.media-row td{background:#f0f4ff!important;color:#1e3a8a;font-we
 <script>
 
 // ── LOGIN ─────────────────────────────────────────────────────────
-var _PWD_HASH = 'e37cf9342b0232783b6d0707e9328acf321c4f2878a054cad43f2bfb82fb8ec8';
-function _sha256(str){
-  // Simple check: compare against stored hash using SubtleCrypto if available
-  // Fallback: compare reversed base64 obfuscation
-  return crypto.subtle.digest('SHA-256', new TextEncoder().encode(str))
-    .then(function(buf){
-      return Array.from(new Uint8Array(buf)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
-    });
-}
+// ── AUTENTICAÇÃO FIREBASE ────────────────────────────────────────
 function doLogin(){
-  var pwd = document.getElementById('loginPwd').value;
-  _sha256(pwd).then(function(hash){
-    if(hash === _PWD_HASH){
-      document.getElementById('loginScreen').style.display='none';
-      var _shell=document.getElementById('appShell');_shell.style.setProperty('display','block','important');_shell.style.visibility='visible';_shell.style.pointerEvents='auto';
-      sessionStorage.setItem('awm_auth',Date.now().toString());
-      if(typeof window.__bootApp === 'function') window.__bootApp();
-    } else {
-      document.getElementById('loginPwd').classList.add('err');
-      document.getElementById('loginErr').style.display='block';
-      document.getElementById('loginPwd').value='';
-      document.getElementById('loginPwd').focus();
-    }
-  });
+  var email = (document.getElementById('loginEmail').value||'').trim();
+  var pwd   = document.getElementById('loginPwd').value;
+  if(!email || !pwd){
+    document.getElementById('loginErr').textContent = 'Preencha e-mail e senha.';
+    document.getElementById('loginErr').style.display='block';
+    return;
+  }
+  var btn = document.getElementById('loginBtn');
+  btn.disabled = true; btn.textContent = 'Entrando…';
+  if(window._fbSignIn && window._fbAuth){
+    window._fbSignIn(window._fbAuth, email, pwd)
+      .catch(function(err){
+        btn.disabled=false; btn.textContent='Entrar';
+        document.getElementById('loginErr').textContent='E-mail ou senha incorretos';
+        document.getElementById('loginErr').style.display='block';
+        document.getElementById('loginPwd').value='';
+        document.getElementById('loginPwd').focus();
+      });
+    // sucesso é tratado pelo onAuthStateChanged no módulo ESM
+  } else {
+    btn.disabled=false; btn.textContent='Entrar';
+    setTimeout(doLogin, 600);
+  }
 }
 function toggleLoginPwd(){
   var inp=document.getElementById('loginPwd');
   inp.type=inp.type==='password'?'text':'password';
 }
-// Auto-login if already authenticated this session
-var _authTs=parseInt(sessionStorage.getItem('awm_auth')||'0');if(_authTs>0&&(Date.now()-_authTs)<8*60*60*1000){// 8h session
-  document.addEventListener('DOMContentLoaded',function(){
-    var ls=document.getElementById('loginScreen');
-    if(ls) ls.style.display='none';
-    var shell=document.getElementById('appShell');
-    if(shell) shell.style.display='block';
-    if(typeof window.__bootApp === 'function') window.__bootApp();
-  });
-} else {
-  document.addEventListener('DOMContentLoaded',function(){
-    var inp=document.getElementById('loginPwd');
-    if(inp) inp.focus();
-  });
-}
+document.addEventListener('DOMContentLoaded',function(){
+  var inp=document.getElementById('loginEmail');
+  if(inp) inp.focus();
+});
+
 
 
 // ── CONSTANTS ──────────────────────────────────────────────────────
@@ -883,30 +935,62 @@ var db=(function(){
   return d;
 })();
 var _saveT=null;
+var _firestoreSyncActive=false;
+
+// ── FIRESTORE SYNC ────────────────────────────────────────────────
+// Inicia listener em tempo real — todos os dispositivos ficam sincronizados
+window._startFirestoreSync = function(){
+  if(_firestoreSyncActive) return;
+  _firestoreSyncActive=true;
+  if(!window._fbOnSnapshot||!window._fbDb||!window._fbDoc) return;
+  window._fbOnSnapshot(
+    window._fbDoc(window._fbDb,'awm','state'),
+    function(snap){
+      if(snap.exists()){
+        try{
+          var remote=JSON.parse(snap.data().payload||'{}');
+          // Mescla apenas se veio de outro dispositivo (evita loop)
+          if(remote.orders) db.orders=remote.orders;
+          if(remote.emails) db.emails=remote.emails;
+          if(remote.tecnicos) db.tecnicos=remote.tecnicos;
+          if(remote.regimes&&remote.regimes.length) db.regimes=remote.regimes;
+          if(remote.audit) db.audit=remote.audit;
+          if(typeof renderDash==='function') renderDash();
+          if(typeof renderRegimes==='function') renderRegimes();
+          showSaveIndicator();
+        }catch(e){ console.warn('Firestore parse error',e); }
+      }
+    },
+    function(err){ console.warn('Firestore listener error',err); }
+  );
+};
+
 function saveDB(){
+  // 1. Salva localmente como backup offline
   try{
     var data=JSON.stringify(db);
     localStorage.setItem('awm8', data);
     localStorage.setItem('awm8_orders', JSON.stringify(db.orders||[]));
     localStorage.setItem('awm8_config', JSON.stringify({emails:db.emails||[],tecnicos:db.tecnicos||[],regimes:db.regimes||[]}));
-    showSaveIndicator();
-    checkStorageQuota();
-    // also try remote sync if available
-    if(typeof _saveT!=='undefined') clearTimeout(_saveT);
-    try{
-      _saveT=setTimeout(function(){
-        fetch('/api/state',{method:'PUT',headers:{'Content-Type':'application/json'},body:data}).catch(function(){});
-      },400);
-    }catch(e){}
   }catch(e){
     if(e.name==='QuotaExceededError'||e.code===22){
-      toast('⚠ Armazenamento cheio! Exporte seus dados antes de continuar.','e');
-      var qw=document.getElementById('quotaWarn');if(qw)qw.classList.add('on');
-    } else {
-      console.error('saveDB error:',e);
-      toast('Erro ao salvar: '+e.message,'e');
+      toast('⚠ Armazenamento local cheio — salvando apenas na nuvem.','w');
     }
   }
+  // 2. Envia para o Firestore (nuvem) com debounce de 600ms
+  if(typeof _saveT!=='undefined') clearTimeout(_saveT);
+  _saveT=setTimeout(function(){
+    if(!window._fbSetDoc||!window._fbDb||!window._fbDoc){ showSaveIndicator(); return; }
+    window._fbSetDoc(
+      window._fbDoc(window._fbDb,'awm','state'),
+      {payload: JSON.stringify(db), updatedAt: Date.now()}
+    ).then(function(){ showSaveIndicator(); })
+     .catch(function(err){
+       console.error('Firestore save error',err);
+       toast('Erro ao salvar na nuvem: '+err.message,'e');
+     });
+  },600);
+  checkStorageQuota();
 }
 
 // ── STATE ──────────────────────────────────────────────────────────
@@ -2881,21 +2965,39 @@ function renderRegimes(){
 
 // ── INIT ──────────────────────────────────────────────────────────
 window.__bootApp = function(){
-  // Reload db from localStorage (auth gate may have populated it after script eval)
-  try {
-    var _d8=localStorage.getItem('awm8');
-    db=_d8?JSON.parse(_d8):(JSON.parse(localStorage.getItem('awm5')||'{}'));
-  } catch(e){ db={}; }
-  if(!db.orders) db.orders=[];
-  if(!db.emails) db.emails=[];
-  if(!db.tecnicos) db.tecnicos=[];
-  if(!db.regimes||!db.regimes.length) db.regimes=DEFAULT_REGIMES.slice();
-  document.getElementById('fData').value=new Date().toISOString().split('T')[0];
-  buildTempoSelect(); onTensao();
-  renderDash();
-  renderRegimes();
-  checkStorageQuota();
-  document.getElementById('fNele').addEventListener('change',function(){if(cur&&cur.identConfirmed){cur.nEle=parseInt(this.value)||13;cur.readings.forEach(function(r){while(r.ele.length<cur.nEle)r.ele.push({d:'',v:'',phase:0});});buildTable();}});
+  // Tenta carregar do Firestore primeiro; fallback para localStorage
+  function _bootWithData(d){
+    if(d) db=d;
+    if(!db.orders) db.orders=[];
+    if(!db.emails) db.emails=[];
+    if(!db.tecnicos) db.tecnicos=[];
+    if(!db.regimes||!db.regimes.length) db.regimes=DEFAULT_REGIMES.slice();
+    if(!db.audit) db.audit=[];
+    document.getElementById('fData').value=new Date().toISOString().split('T')[0];
+    buildTempoSelect(); onTensao();
+    renderDash();
+    renderRegimes();
+    checkStorageQuota();
+    document.getElementById('fNele').addEventListener('change',function(){if(cur&&cur.identConfirmed){cur.nEle=parseInt(this.value)||13;cur.readings.forEach(function(r){while(r.ele.length<cur.nEle)r.ele.push({d:'',v:'',phase:0});});buildTable();}});
+    // Inicia sync em tempo real
+    window._startFirestoreSync && window._startFirestoreSync();
+  }
+
+  if(window._fbGetDoc && window._fbDb && window._fbDoc){
+    window._fbGetDoc(window._fbDoc(window._fbDb,'awm','state'))
+      .then(function(snap){
+        if(snap.exists()){
+          try{ _bootWithData(JSON.parse(snap.data().payload||'{}')); return; }catch(e){}
+        }
+        // Documento ainda nao existe na nuvem — usa localStorage
+        try{ var _d8=localStorage.getItem('awm8'); _bootWithData(_d8?JSON.parse(_d8):{}); }catch(e){ _bootWithData({}); }
+      })
+      .catch(function(){ 
+        try{ var _d8=localStorage.getItem('awm8'); _bootWithData(_d8?JSON.parse(_d8):{}); }catch(e){ _bootWithData({}); }
+      });
+  } else {
+    try{ var _d8=localStorage.getItem('awm8'); _bootWithData(_d8?JSON.parse(_d8):{}); }catch(e){ _bootWithData({}); }
+  }
 };
 </script>
 
