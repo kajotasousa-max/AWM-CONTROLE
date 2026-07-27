@@ -446,6 +446,9 @@ table.ata-tbl tr.media-row td{background:#f0f4ff!important;color:#1e3a8a;font-we
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
       <input id="dashSearch" placeholder="🔍  Buscar por OS, cliente, marca..." style="flex:1;min-width:180px;max-width:360px" oninput="renderDash()">
       <button class="btn am" onclick="openNew()">+ Nova bateria</button>
+      <button class="btn sm" onclick="exportBackup()" title="Backup restaurável (.json)">⬇ Backup</button>
+      <button class="btn sm" onclick="importBackup()" title="Restaurar backup .json">⬆ Importar</button>
+      <button class="btn sm" onclick="exportarFullXLSX()" title="Planilha completa (Baterias, Leituras, Auditoria)">📊 Excel completo</button>
     </div>
     <div class="bg" id="gAct"></div>
     <div id="gQueueSec" style="display:none">
@@ -1706,6 +1709,7 @@ function mkCard(bat){
     '<div class="bsub">'+(bat.cliente||'—')+' · Série: '+(bat.serie||'—')+' · '+(bat.tempo||'5h')+'</div></div>'+
     '<div style="display:flex;align-items:center;gap:8px">'+
     '<span class="cdx '+cdCls+'">'+cdTxt+'</span>'+
+    (st==='queue'?'<button class="btn sm gn" onclick="event.stopPropagation();iniciarAgora(\''+bat.id+'\')" title="Iniciar antes do horário programado">▶ Iniciar agora</button>':'')+
     '<button class="btn sm am" onclick="event.stopPropagation();openEdit(\''+bat.id+'\')">Abrir</button>'+
     '<button class="btn sm rd" onclick="event.stopPropagation();confirmDelete(\''+bat.id+'\')" title="Excluir">🗑</button>'+
     '</div></div>'+
@@ -1713,6 +1717,20 @@ function mkCard(bat){
     '<div class="bprog" style="flex:1"><div class="bprogf" style="width:'+Math.round(nD/tot*100)+'%"></div></div>'+
     '<span style="font-family:var(--mono);font-size:11px;color:var(--mu)">'+nD+'/'+tot+'</span></div>';
   return el;
+}
+function iniciarAgora(id){
+  var bat=db.orders.find(function(o){return o.id===id;}); if(!bat) return;
+  showConfirmModal('Iniciar OS '+(bat.os||'')+' agora?',
+    'A bateria sai da fila de espera e o 1º registro fica liberado imediatamente.','▶ Iniciar agora',
+    function(){
+      var n=new Date(),p=function(x){return String(x).padStart(2,'0')};
+      bat.data=n.getFullYear()+'-'+p(n.getMonth()+1)+'-'+p(n.getDate());
+      bat.inicioManual='';
+      auditLog('INICIADO_ANTECIPADO',bat.id,'OS '+(bat.os||'—'));
+      saveDB(); renderDash();
+      if(cur&&cur.id===bat.id){ try{loadForm();}catch(e){} }
+      toast('OS '+(bat.os||'')+' iniciada — registro liberado.');
+    });
 }
 function confirmDelete(id){
   var bat=db.orders.find(function(o){return o.id===id;});if(!bat)return;
@@ -1858,9 +1876,9 @@ function unlockIdent(){
   document.getElementById('lkNotice').classList.remove('show');
 }
 function addInputListeners(){
-  ['fOs','fMarca','fSerie','fTensao','fNele','fDesc','fDens','fA','fData','fCliente','fObs','fCorrenteBat'].forEach(function(id){
+  ['fOs','fMarca','fSerie','fTensao','fNele','fDesc','fDens','fA','fData','fCliente','fObs','fCorrenteBat','fInicio','fTipoCorrente','fTempo'].forEach(function(id){
     var el=document.getElementById(id);
-    if(el){el.addEventListener('input',setDirty,{once:false});el.addEventListener('change',setDirty,{once:false});}
+    if(el){el.addEventListener('input',setDirty);el.addEventListener('change',setDirty);}
   });
 }
 function collectIdent(){
@@ -3049,6 +3067,7 @@ window.__bootApp = function(){
     if(!db.regimes||!db.regimes.length) db.regimes=DEFAULT_REGIMES.slice();
     if(!db.audit) db.audit=[];
     document.getElementById('fData').value=new Date().toISOString().split('T')[0];
+    addInputListeners();
     buildTempoSelect(); onTensao();
     renderDash();
     renderRegimes();
@@ -3362,10 +3381,10 @@ h4{color:var(--am);font-size:13px;letter-spacing:.1em;text-transform:uppercase;m
   &lt;div class=&quot;chap-hdr&quot;&gt;&lt;span class=&quot;chap-num&quot;&gt;Cap. 9&lt;/span&gt;&lt;span class=&quot;chap-title&quot;&gt;Backup e Dados&lt;/span&gt;&lt;/div&gt;
   &lt;div class=&quot;chap-body&quot;&gt;
     &lt;div class=&quot;chap-intro&quot;&gt;Os dados são sincronizados na nuvem (Firebase) entre todos os dispositivos conectados, com cópia local no navegador (localStorage) para uso offline. Mesmo assim, faça backup regularmente.&lt;/div&gt;
-    &lt;div class=&quot;alert warn&quot;&gt;&lt;strong&gt;⚠ Atenção:&lt;/strong&gt; Limpar o histórico/cache do navegador apaga todos os dados. Use um dispositivo fixo para cada técnico e faça backups periódicos.&lt;/div&gt;
-    &lt;div class=&quot;step&quot;&gt;&lt;div class=&quot;step-n&quot;&gt;1&lt;/div&gt;&lt;div class=&quot;step-body&quot;&gt;&lt;div class=&quot;step-title&quot;&gt;Exportar backup (Excel)&lt;/div&gt;&lt;div class=&quot;step-desc&quot;&gt;Acesse a aba &lt;strong&gt;Relatório → Exportar Excel/CSV&lt;/strong&gt;. Gera um arquivo .xlsx com 3 abas: Baterias, Leituras e Auditoria. Se a biblioteca não carregar, exporta como .csv.&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
-    &lt;div class=&quot;step&quot;&gt;&lt;div class=&quot;step-n&quot;&gt;2&lt;/div&gt;&lt;div class=&quot;step-body&quot;&gt;&lt;div class=&quot;step-title&quot;&gt;Importar backup&lt;/div&gt;&lt;div class=&quot;step-desc&quot;&gt;Clique em &lt;strong&gt;⬆ Importar&lt;/strong&gt; no topo do sistema. Selecione o arquivo .json de backup. Os dados atuais serão substituídos — uma confirmação é exibida antes.&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
-    &lt;div class=&quot;alert info&quot;&gt;&lt;strong&gt;ℹ Capacidade:&lt;/strong&gt; O localStorage suporta ~5MB, equivalente a 2.000–3.000 OS típicas. Para a operação normal da AWM, o limite nunca será atingido no uso diário.&lt;/div&gt;
+    &lt;div class=&quot;alert warn&quot;&gt;&lt;strong&gt;⚠ Atenção:&lt;/strong&gt; Limpar o histórico/cache apaga apenas a cópia local — os dados são recuperados da nuvem no próximo login. Mantenha backups periódicos mesmo assim.&lt;/div&gt;
+    &lt;div class=&quot;step&quot;&gt;&lt;div class=&quot;step-n&quot;&gt;1&lt;/div&gt;&lt;div class=&quot;step-body&quot;&gt;&lt;div class=&quot;step-title&quot;&gt;Exportar backup (Excel)&lt;/div&gt;&lt;div class=&quot;step-desc&quot;&gt;No &lt;strong&gt;Dashboard&lt;/strong&gt;, clique em &lt;strong&gt;📊 Excel completo&lt;/strong&gt; (arquivo .xlsx com 3 abas: Baterias, Leituras e Auditoria). Para um backup restaurável, use &lt;strong&gt;⬇ Backup&lt;/strong&gt;, que gera .json — é este o formato aceito na importação.&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+    &lt;div class=&quot;step&quot;&gt;&lt;div class=&quot;step-n&quot;&gt;2&lt;/div&gt;&lt;div class=&quot;step-body&quot;&gt;&lt;div class=&quot;step-title&quot;&gt;Importar backup&lt;/div&gt;&lt;div class=&quot;step-desc&quot;&gt;No &lt;strong&gt;Dashboard&lt;/strong&gt;, clique em &lt;strong&gt;⬆ Importar&lt;/strong&gt;. Selecione o arquivo .json gerado pelo botão ⬇ Backup. Os dados atuais serão substituídos — uma confirmação é exibida antes.&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+    &lt;div class=&quot;alert info&quot;&gt;&lt;strong&gt;ℹ Capacidade:&lt;/strong&gt; A cópia local do navegador suporta ~5MB (2.000–3.000 OS típicas). Se ela encher, o sistema continua salvando na nuvem e avisa na tela.&lt;/div&gt;
   &lt;/div&gt;
 &lt;/div&gt;
 
@@ -3381,7 +3400,7 @@ h4{color:var(--am);font-size:13px;letter-spacing:.1em;text-transform:uppercase;m
       &lt;tr&gt;&lt;td&gt;Regimes não aparecem&lt;/td&gt;&lt;td&gt;Clique na aba Regimes — serão carregados automaticamente&lt;/td&gt;&lt;/tr&gt;
       &lt;tr&gt;&lt;td&gt;PDF não gera&lt;/td&gt;&lt;td&gt;Aguarde 3s após abrir o relatório (biblioteca carregando) e tente novamente&lt;/td&gt;&lt;/tr&gt;
       &lt;tr&gt;&lt;td&gt;Alarme não toca&lt;/td&gt;&lt;td&gt;Verifique se o volume do dispositivo está ligado e se o navegador tem permissão de áudio&lt;/td&gt;&lt;/tr&gt;
-      &lt;tr&gt;&lt;td&gt;Dados sumiram&lt;/td&gt;&lt;td&gt;Verifique se o cache foi limpo. Se sim, use o backup exportado anteriormente&lt;/td&gt;&lt;/tr&gt;
+      &lt;tr&gt;&lt;td&gt;Dados sumiram&lt;/td&gt;&lt;td&gt;Saia e entre novamente para recarregar da nuvem. Verifique a conexão. Persistindo, restaure o backup .json&lt;/td&gt;&lt;/tr&gt;
     &lt;/table&gt;
   &lt;/div&gt;
 &lt;/div&gt;
