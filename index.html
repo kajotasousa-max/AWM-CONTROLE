@@ -430,6 +430,7 @@ table.ata-tbl tr.media-row td{background:#f0f4ff!important;color:#1e3a8a;font-we
   <button class="tab" onclick="gTab('te')">E-mails</button>
   <button class="tab" onclick="gTab('ttech')">Técnicos</button>
   <button class="tab" onclick="gTab('treg')">Regimes</button>
+  <button class="tab" onclick="gTab('tman')">📖 Manual</button>
   <div style="flex:1"></div>
 </div>
 <div class="shell">
@@ -861,6 +862,9 @@ document.addEventListener('DOMContentLoaded',function(){
 // ── CONSTANTS ──────────────────────────────────────────────────────
 var GRACE=10*60000, WARN=10*60000;
 var PIN_CORRETO='4004';
+// Converte timestamps 'AAAA-MM-DD HH:mm:ss' em ms de forma segura.
+// (new Date com espaço no lugar do 'T' retorna Invalid Date no Safari/iOS)
+function parseTs(ts){ if(!ts) return NaN; return +new Date(String(ts).replace(' ','T')); }
 function isDateFuture(dateStr){if(!dateStr)return false;var today=new Date();today.setHours(0,0,0,0);var d=new Date(dateStr+'T00:00:00');return d>today;}
 var TENSAO_FINAL={'6':5.2,'12':10.4,'24':20.8,'36':31.1,'48':41.5,'80':69.2};
 var KM_TABLE=[
@@ -944,7 +948,13 @@ var _saveT=null;
 var _firestoreSyncActive=false;
 
 // ── FIRESTORE SYNC ────────────────────────────────────────────────
-// Inicia listener em tempo real — todos os dispositivos ficam sincronizados
+// Inicia listener em tempo real — todos os dispositivos ficam sincronizados.
+// Proteções contra perda de dados:
+//  1. Ignora ecos do próprio dispositivo (hasPendingWrites / updatedAt).
+//  2. Nunca sobrescreve a OS aberta com alterações não salvas (local vence).
+//  3. Religa a referência `cur` após aplicar dados remotos (evita edições órfãs).
+var _lastLocalWrite=0;   // updatedAt do último envio deste dispositivo
+var _rev=0;              // revisão conhecida do documento na nuvem
 window._startFirestoreSync = function(){
   if(_firestoreSyncActive) return;
   _firestoreSyncActive=true;
@@ -952,24 +962,63 @@ window._startFirestoreSync = function(){
   window._fbOnSnapshot(
     window._fbDoc(window._fbDb,'awm','state'),
     function(snap){
-      if(snap.exists()){
-        try{
-          var remote=JSON.parse(snap.data().payload||'{}');
-          // Mescla apenas se veio de outro dispositivo (evita loop)
-          if(remote.orders) db.orders=remote.orders;
-          if(remote.emails) db.emails=remote.emails;
-          if(remote.tecnicos) db.tecnicos=remote.tecnicos;
-          if(remote.regimes&&remote.regimes.length) db.regimes=remote.regimes;
-          if(remote.audit) db.audit=remote.audit;
-          if(typeof renderDash==='function') renderDash();
-          if(typeof renderRegimes==='function') renderRegimes();
-          showSaveIndicator();
-        }catch(e){ console.warn('Firestore parse error',e); }
-      }
+      if(!snap.exists()) return;
+      try{
+        // Eco do próprio write local ainda pendente — ignora
+        if(snap.metadata && snap.metadata.hasPendingWrites) return;
+        var meta=snap.data();
+        // Revisão já conhecida (eco do próprio dispositivo ou dado antigo) — ignora
+        if(typeof meta.rev==='number'){
+          if(meta.rev<=_rev) return;
+          _rev=meta.rev;
+        } else if(meta.updatedAt && meta.updatedAt<=_lastLocalWrite){
+          return; // fallback para documentos antigos sem rev
+        }
+        var remote=JSON.parse(meta.payload||'{}');
+        applyRemoteData(remote);
+      }catch(e){ console.warn('Firestore parse error',e); }
     },
     function(err){ console.warn('Firestore listener error',err); }
   );
 };
+
+function applyRemoteData(remote){
+  // Preserva a OS que está sendo editada com alterações não salvas
+  var localCur=null;
+  if(cur && !cur._isNew){
+    if(_dirty){ try{ syncFromDOM(); }catch(e){} localCur=cur; }
+  }
+  if(remote.orders) db.orders=remote.orders;
+  if(remote.emails) db.emails=remote.emails;
+  if(remote.tecnicos) db.tecnicos=remote.tecnicos;
+  if(remote.regimes&&remote.regimes.length) db.regimes=remote.regimes;
+  if(remote.audit) db.audit=remote.audit;
+  // Religa `cur` ao objeto correspondente dentro do novo db.orders
+  if(cur && !cur._isNew){
+    var idx=-1;
+    for(var i=0;i<db.orders.length;i++){ if(db.orders[i].id===cur.id){idx=i;break;} }
+    if(localCur){
+      // Local com alterações pendentes vence: reinsere a versão local
+      if(idx>=0) db.orders[idx]=localCur; else db.orders.push(localCur);
+      cur=localCur;
+    } else if(idx>=0){
+      cur=db.orders[idx];
+      // Painel aberto sem alterações pendentes → reflete dados remotos
+      if(document.getElementById('panel').classList.contains('on')){
+        try{ loadForm(); }catch(e){}
+      }
+    } else {
+      // OS foi excluída em outro dispositivo
+      toast('⚠ A OS aberta foi excluída em outro dispositivo.','w');
+      _doClose();
+    }
+  }
+  if(typeof renderDash==='function') renderDash();
+  if(typeof renderRegimes==='function') renderRegimes();
+  if(typeof buildTempoSelect==='function') buildTempoSelect();
+  if(typeof renderEmails==='function'&&document.getElementById('te').classList.contains('on')) renderEmails();
+  if(typeof renderTechs==='function'&&document.getElementById('ttech').classList.contains('on')) renderTechs();
+}
 
 function saveDB(){
   // 1. Salva localmente como backup offline
@@ -981,23 +1030,36 @@ function saveDB(){
   }catch(e){
     if(e.name==='QuotaExceededError'||e.code===22){
       toast('⚠ Armazenamento local cheio — salvando apenas na nuvem.','w');
+    } else {
+      console.warn('localStorage save error',e);
     }
   }
   // 2. Envia para o Firestore (nuvem) com debounce de 600ms
   if(typeof _saveT!=='undefined') clearTimeout(_saveT);
-  _saveT=setTimeout(function(){
-    if(!window._fbSetDoc||!window._fbDb||!window._fbDoc){ showSaveIndicator(); return; }
-    window._fbSetDoc(
-      window._fbDoc(window._fbDb,'awm','state'),
-      {payload: JSON.stringify(db), updatedAt: Date.now()}
-    ).then(function(){ showSaveIndicator(); })
-     .catch(function(err){
-       console.error('Firestore save error',err);
-       toast('Erro ao salvar na nuvem: '+err.message,'e');
-     });
-  },600);
+  _saveT=setTimeout(flushCloudSave,600);
   checkStorageQuota();
 }
+// Envia imediatamente o estado atual para a nuvem (usado no debounce e ao fechar a página)
+function flushCloudSave(){
+  clearTimeout(_saveT); _saveT=null;
+  if(!window._fbSetDoc||!window._fbDb||!window._fbDoc){ showSaveIndicator(); return; }
+  var stamp=Date.now();
+  _lastLocalWrite=stamp;
+  _rev=_rev+1;
+  window._fbSetDoc(
+    window._fbDoc(window._fbDb,'awm','state'),
+    {payload: JSON.stringify(db), updatedAt: stamp, rev: _rev}
+  ).then(function(){ showSaveIndicator(); })
+   .catch(function(err){
+     console.error('Firestore save error',err);
+     toast('Erro ao salvar na nuvem: '+err.message,'e');
+   });
+}
+// Garante que um salvamento pendente (debounce) não se perca ao fechar/trocar de aba
+function _flushIfPending(){ if(_saveT){ flushCloudSave(); } }
+window.addEventListener('beforeunload', _flushIfPending);
+window.addEventListener('pagehide', _flushIfPending);
+document.addEventListener('visibilitychange', function(){ if(document.visibilityState==='hidden') _flushIfPending(); });
 
 // ── STATE ──────────────────────────────────────────────────────────
 var cur=null, _dirty=false, _emailTarget='', _rptBat=null;
@@ -1034,7 +1096,7 @@ function numOnly(el,dec){
 function totalPausaMs(bat){
   if(!bat.pausas||!bat.pausas.length) return 0;
   return bat.pausas.reduce(function(sum,p){
-    if(p.inicio&&p.fim) return sum+(+new Date(p.fim)-+new Date(p.inicio));
+    if(p.inicio&&p.fim) return sum+(parseTs(p.fim)-parseTs(p.inicio));
     return sum;
   },0);
 }
@@ -1053,9 +1115,11 @@ function gTab(id){
       }
     }
   }
+  var tabBtns=document.querySelectorAll('.tab');
   ['td','trep','te','ttech','treg','tman'].forEach(function(t,i){
-    document.getElementById(t).classList.toggle('on',t===id);
-    document.querySelectorAll('.tab')[i].classList.toggle('on',t===id);
+    var sec=document.getElementById(t);
+    if(sec) sec.classList.toggle('on',t===id);
+    if(tabBtns[i]) tabBtns[i].classList.toggle('on',t===id);
   });
   if(id==='td') renderDash();
   if(id==='trep') renderRelatorio();
@@ -1069,10 +1133,14 @@ function openPanel(){document.getElementById('panel').classList.add('on');docume
 function reqClose(){
   // New OS with nothing filled and not confirmed → close silently
   if(cur&&cur._isNew&&!cur.identConfirmed){
-    var hasAny=((cur.os||'')+(cur.marca||'')+(cur.serie||'')+(cur.cliente||'')).trim();
+    var hasAny=((cur.os||'')+(cur.marca||'')+(cur.serie||'')+(cur.cliente||'')).trim()
+      +((document.getElementById('fOs')||{}).value||'').trim()
+      +((document.getElementById('fMarca')||{}).value||'').trim()
+      +((document.getElementById('fCliente')||{}).value||'').trim();
     if(!hasAny){_doClose();return;}
   }
-  // Always ask before closing
+  // Sem alterações pendentes → fecha direto, sem perguntar
+  if(!_dirty && !(cur&&cur._isNew)){_doClose();return;}
   document.getElementById('cfMod').classList.add('on');
 }
 function forceClose(){closeModal('cfMod');_doClose();}
@@ -1105,8 +1173,8 @@ function rSt(bat,i){
     return 'due';
   }
   var prev=bat.readings[i-1]; if(!prev||!prev.ts) return 'locked';
-  var unlockAt=+new Date(prev.ts)+iMs+pause;
-  if(r.ts) return +new Date(r.ts)<=unlockAt+GRACE?'ok':'late';
+  var unlockAt=parseTs(prev.ts)+iMs+pause;
+  if(r.ts) return parseTs(r.ts)<=unlockAt+GRACE?'ok':'late';
   if(now<unlockAt) return 'locked';
   return now>unlockAt+WARN?'overdue':'due';
 }
@@ -1116,7 +1184,7 @@ function nextInfo(bat){
     if(s==='due'||s==='overdue') return {i:i,s:s,msLeft:0};
     if(s==='locked'){
       var p=bat.readings[i-1];
-      if(p&&p.ts){var iMs=getIntervalMs(bat.tempo),pause=totalPausaMs(bat);return {i:i,s:'locked',msLeft:Math.max(0,+new Date(p.ts)+iMs+pause-Date.now())};}
+      if(p&&p.ts){var iMs=getIntervalMs(bat.tempo),pause=totalPausaMs(bat);return {i:i,s:'locked',msLeft:Math.max(0,parseTs(p.ts)+iMs+pause-Date.now())};}
       return {i:i,s:'locked',msLeft:null};
     }
   }
@@ -1194,8 +1262,8 @@ function _matchSearch(o){
 
 function mkDoneCard(bat){
   var an=analyze(bat);
-  var t0=bat.readings&&bat.readings[0]&&bat.readings[0].ts?+new Date(bat.readings[0].ts):null;
-  var tLast=null;(bat.readings||[]).forEach(function(r){if(r.ts)tLast=+new Date(r.ts);});
+  var t0=bat.readings&&bat.readings[0]&&bat.readings[0].ts?parseTs(bat.readings[0].ts):null;
+  var tLast=null;(bat.readings||[]).forEach(function(r){if(r.ts)tLast=parseTs(r.ts);});
   var totalMin=t0&&tLast?Math.round(((tLast-t0)-totalPausaMs(bat))/60000):null;
   var reg=db.regimes.find(function(r){return r.nome===bat.tempo;})||{};
   var tempoMaxMin=(reg.duracaoH||5)*60;
@@ -1315,7 +1383,7 @@ function _readingMetrics(bat){
   for(var i=0;i<bat.readings.length;i++){
     var r=bat.readings[i];
     if(!r||!r.ts) continue;
-    var actual=+new Date(r.ts);
+    var actual=parseTs(r.ts);
     if(!firstTs||actual<firstTs)firstTs=actual;
     if(!lastTs||actual>lastTs)lastTs=actual;
     if(i===0){
@@ -1323,7 +1391,7 @@ function _readingMetrics(bat){
     } else {
       var prev=bat.readings[i-1];
       if(!prev||!prev.ts) continue;
-      var due=+new Date(prev.ts)+iMs+pause;
+      var due=parseTs(prev.ts)+iMs+pause;
       var delay=Math.max(0,actual-due);
       var late=delay>GRACE;
       entries.push({idx:i,r:r,due:due,actual:actual,delayMs:delay,late:late,onTime:!late});
@@ -1737,7 +1805,6 @@ function openNew(){
     identConfirmed:false,readings:[],pausas:[],pausado:false,_isNew:true};
   // NOT pushed to db.orders yet — only saved on confirmarIdent or explicit salvar
   loadForm(); document.getElementById('ptitle').textContent='Nova bateria'; openPanel();
-  for(var _ai=0;_ai<20;_ai++) window['_al'+_ai]=false;
 }
 function openEdit(id){
   var o=db.orders.find(function(x){return x.id===id;}); if(!o) return;
@@ -1766,8 +1833,8 @@ function loadForm(){
 function updateInicioDisplay(){
   var r0=cur.readings&&cur.readings[0];
   document.getElementById('showInicio').textContent=r0&&r0.ts?fmtTs(r0.ts):'--:--';
-  var r0ts=r0&&r0.ts?+new Date(r0.ts):null;
-  var tLast=null; if(cur.readings) cur.readings.forEach(function(r){if(r.ts)tLast=+new Date(r.ts);});
+  var r0ts=r0&&r0.ts?parseTs(r0.ts):null;
+  var tLast=null; if(cur.readings) cur.readings.forEach(function(r){if(r.ts)tLast=parseTs(r.ts);});
   if(r0ts&&tLast){
     var min=Math.round((tLast-r0ts)/60000);
     document.getElementById('showDuracao').textContent=Math.floor(min/60)+'h'+String(min%60).padStart(2,'0')+'min';
@@ -1826,6 +1893,9 @@ function confirmarIdent(){
   var errs=[];
   req.forEach(function(r){var el=document.getElementById(r[0]);if(!el.value.trim()){el.classList.add('err');errs.push(r[1]);}else el.classList.remove('err');});
   if(errs.length){toast('Obrigatório: '+errs.join(', '),'e');return;}
+  // Aviso (não bloqueante) de OS duplicada
+  var dup=db.orders.some(function(o){return o.id!==cur.id && (o.os||'').trim()===(cur.os||'').trim();});
+  if(dup) toast('⚠ Já existe outra OS com o número '+cur.os+'.','w');
   cur.identConfirmed=true;
   // If this is a new OS not yet in db, add it now
   if(cur._isNew){
@@ -1903,7 +1973,7 @@ function resumePause(){
   var n=new Date(),p=function(x){return String(x).padStart(2,'0')};
   var ts=n.getFullYear()+'-'+p(n.getMonth()+1)+'-'+p(n.getDate())+' '+p(n.getHours())+':'+p(n.getMinutes())+':'+p(n.getSeconds());
   var pausa=cur.pausas.find(function(p2){return !p2.fim;});
-  if(pausa){pausa.fim=ts;pausa.duracaoMin=Math.round((+new Date(ts)-+new Date(pausa.inicio))/60000);}
+  if(pausa){pausa.fim=ts;pausa.duracaoMin=Math.round((parseTs(ts)-parseTs(pausa.inicio))/60000);}
   cur.pausado=false;
   saveDB(); buildTable(); updatePauseBar();
   toast('Descarga retomada. Tempo de pausa descontado.');
@@ -1956,7 +2026,7 @@ function buildTable(){
           }
           // No inicioManual = immediately due
         } else if(cur.readings[r-1]&&cur.readings[r-1].ts){
-          unlockMs=Math.max(0,+new Date(cur.readings[r-1].ts)+getIntervalMs(cur.tempo)+totalPausaMs(cur)-Date.now());
+          unlockMs=Math.max(0,parseTs(cur.readings[r-1].ts)+getIntervalMs(cur.tempo)+totalPausaMs(cur)-Date.now());
         }
       }
 
@@ -2034,7 +2104,8 @@ function buildTable(){
       var td0=document.createElement('td'); td0.className='eln'; td0.textContent=String(e+1).padStart(2,'0'); tr.appendChild(td0);
       for(var ri=0;ri<nD;ri++){
         (function(r){
-          var rd=cur.readings[r], cel=rd.ele[e]||{d:'',v:'',phase:0};
+          var rd=cur.readings[r], cel=rd.ele[e];
+          if(!cel){ cel={d:'',v:'',phase:0}; rd.ele[e]=cel; }
           var locked=!rd.ts, perm=cel.phase>=3;
           var td1=document.createElement('td');
           var in1=document.createElement('input'); in1.className='cell'; in1.placeholder='';in1.type='text';in1.inputmode='numeric';
@@ -2188,8 +2259,8 @@ function checkTimeExceeded(){
   if(!cur) return;
   var reg=db.regimes.find(function(r){return r.nome===cur.tempo;});
   var tempoMax=(reg?reg.duracaoH:5)*3600000;
-  var t0=cur.readings[0]&&cur.readings[0].ts?+new Date(cur.readings[0].ts):null; if(!t0) return;
-  var last=null; cur.readings.forEach(function(r){if(r.ts)last=+new Date(r.ts);});
+  var t0=cur.readings[0]&&cur.readings[0].ts?parseTs(cur.readings[0].ts):null; if(!t0) return;
+  var last=null; cur.readings.forEach(function(r){if(r.ts)last=parseTs(r.ts);});
   var net=(last||Date.now())-t0-totalPausaMs(cur);
   if(net>tempoMax+GRACE) toast('⚠ Tempo total ultrapassou o regime '+cur.tempo+'!','w');
 }
@@ -2248,7 +2319,31 @@ function syncFromDOM(){
     var t=document.getElementById('tmp'+r); if(t) cur.readings[r].tempC=t.value;
   }
 }
-function salvar(){if(!cur) return; syncFromDOM(); saveDB(); buildTable(); _dirty=false; toast('Salvo com sucesso ✓');}
+function salvar(){
+  if(!cur) return;
+  // Se os campos de identificação estão editáveis (OS nova ou identificação
+  // liberada via "reconfirmar"), captura-os também — antes esses dados eram
+  // perdidos mesmo com o toast "Salvo com sucesso".
+  var identUnlocked=document.getElementById('btnConf').style.display!=='none';
+  if(cur._isNew || identUnlocked){
+    collectIdent();
+    if(cur._isNew){
+      var hasAny=((cur.os||'')+(cur.marca||'')+(cur.serie||'')+(cur.cliente||'')).trim();
+      if(!hasAny){ toast('Preencha ao menos a OS para salvar.','w'); return; }
+      delete cur._isNew;
+      db.orders.push(cur);
+      auditLog('OS_SALVA_SEM_CONFIRMAR', cur.id, 'OS '+(cur.os||'—'));
+      document.getElementById('ptitle').textContent='OS '+(cur.os||'—');
+    }
+    // Se identificação já estava confirmada, mantém arrays consistentes com nDesc/nEle
+    if(cur.identConfirmed){
+      if(!cur.pausas) cur.pausas=[];
+      while(cur.readings.length<cur.nDesc) cur.readings.push({ts:null,tecnico:'',ele:[],tempC:''});
+      cur.readings.forEach(function(r){while(r.ele.length<cur.nEle) r.ele.push({d:'',v:'',phase:0});});
+    }
+  }
+  syncFromDOM(); saveDB(); if(cur.identConfirmed) buildTable(); _dirty=false; toast('Salvo com sucesso ✓');
+}
 
 // ── ALERT / SOUND ──────────────────────────────────────────────────
 function playAlert(){
@@ -2278,15 +2373,17 @@ var _mainInterval=setInterval(function(){
       var cd0=document.getElementById('lkcd0');
       if(cd0) cd0.textContent=ms0===0?'AGORA':fmtMs(ms0);
       if(ms0===0) buildTable();
-      if(ms0>0&&ms0<=10*60000&&!window._al0){window._al0=true;playAlert();toast('⏰ 10 min para o 1º registro!','w');}
+      var _k0='_al_'+cur.id+'_0';
+      if(ms0>0&&ms0<=10*60000&&!window[_k0]){window[_k0]=true;playAlert();toast('⏰ 10 min para o 1º registro!','w');}
     }
     for(var ri=1;ri<(cur.nDesc||5);ri++){
       var cdEl=document.getElementById('lkcd'+ri);
       if(cdEl&&cur.readings&&cur.readings[ri-1]&&cur.readings[ri-1].ts){
-        var ms=Math.max(0,+new Date(cur.readings[ri-1].ts)+getIntervalMs(cur.tempo)+totalPausaMs(cur)-now);
+        var ms=Math.max(0,parseTs(cur.readings[ri-1].ts)+getIntervalMs(cur.tempo)+totalPausaMs(cur)-now);
         cdEl.textContent=fmtMs(ms);
         if(ms===0) buildTable();
-        if(ms>0&&ms<=10*60000&&!window['_al'+ri]){window['_al'+ri]=true;playAlert();toast('⏰ 10 min para Leitura '+(ri+1)+'!','w');}
+        var _kr='_al_'+cur.id+'_'+ri;
+        if(ms>0&&ms<=10*60000&&!window[_kr]){window[_kr]=true;playAlert();toast('⏰ 10 min para Leitura '+(ri+1)+'!','w');}
       }
     }
     updateInicioDisplay();
@@ -2384,8 +2481,8 @@ function renderReport(bat){
   var nD=bat.nDesc||5, nE=bat.nEle||13;
   var an=analyze(bat);
   var media=an.media;
-  var t0=bat.readings[0]&&bat.readings[0].ts?+new Date(bat.readings[0].ts):null;
-  var tLast=null; bat.readings.forEach(function(r){if(r.ts)tLast=+new Date(r.ts);});
+  var t0=bat.readings[0]&&bat.readings[0].ts?parseTs(bat.readings[0].ts):null;
+  var tLast=null; bat.readings.forEach(function(r){if(r.ts)tLast=parseTs(r.ts);});
   var reg=db.regimes.find(function(r){return r.nome===bat.tempo;})||{duracaoH:5};
   var tempoMaxMin=reg.duracaoH*60;
   var pausaMs=totalPausaMs(bat);
@@ -2400,7 +2497,7 @@ function renderReport(bat){
   if(timeExceeded) alertsHtml+='<div class="ata-alert">⚠ Tempo líquido de '+totalMin+' min ultrapassou o regime de '+bat.tempo+' ('+tempoMaxMin+' min).</div>';
   bat.readings.forEach(function(r,i){
     if(rSt(bat,i)==='late'&&i>0&&bat.readings[i-1]&&bat.readings[i-1].ts){
-      var diff=Math.round((+new Date(r.ts)-+new Date(bat.readings[i-1].ts))/60000);
+      var diff=Math.round((parseTs(r.ts)-parseTs(bat.readings[i-1].ts))/60000);
       alertsHtml+='<div class="ata-alert warn">⚠ Leitura '+(i+1)+' registrada com '+(diff-reg.intervaloMin)+' min de atraso.</div>';
     }
   });
@@ -2466,7 +2563,7 @@ function renderReport(bat){
     if(!r.ts) tag='<span class="t-pend">PENDENTE</span>';
     else if(st==='ok'&&!r.forcedUnlock) tag='<span class="t-ok">NO PRAZO</span>';
     else if(st==='ok'&&r.forcedUnlock) tag='<span class="t-late">FORA DO PRAZO</span>'+unlockBadge;
-    else{tag='<span class="t-late">ATRASADA</span>'+unlockBadge;if(i>0&&bat.readings[i-1].ts){var diff=Math.round((+new Date(r.ts)-+new Date(bat.readings[i-1].ts))/60000);diffNote='<span style="color:#888;font-size:11px">'+diff+'min após anterior</span>';}}
+    else{tag='<span class="t-late">ATRASADA</span>'+unlockBadge;if(i>0&&bat.readings[i-1].ts){var diff=Math.round((parseTs(r.ts)-parseTs(bat.readings[i-1].ts))/60000);diffNote='<span style="color:#888;font-size:11px">'+diff+'min após anterior</span>';}}
     timeRows+='<div class="ata-time-row">'+
       '<span style="font-weight:700">Leitura '+(i+1)+'</span>'+
       '<span style="font-family:\'IBM Plex Mono\',monospace;font-weight:700">'+(r.ts?fmtTs(r.ts):'—')+'</span>'+
@@ -2553,8 +2650,8 @@ function gerarPDF(){
   y=30;
   // 1. Identification
   var reg=db.regimes.find(function(r){return r.nome===bat.tempo;})||{duracaoH:5};
-  var t0=bat.readings[0]&&bat.readings[0].ts?+new Date(bat.readings[0].ts):null;
-  var tLast=null; bat.readings.forEach(function(r){if(r.ts)tLast=+new Date(r.ts);});
+  var t0=bat.readings[0]&&bat.readings[0].ts?parseTs(bat.readings[0].ts):null;
+  var tLast=null; bat.readings.forEach(function(r){if(r.ts)tLast=parseTs(r.ts);});
   var pausaMs=totalPausaMs(bat);
   var totalMin=t0&&tLast?Math.round(((tLast-t0)-pausaMs)/60000):null;
   var tempoMaxMin=reg.duracaoH*60;
@@ -2625,7 +2722,7 @@ function gerarPDF(){
   // 3. Time table
   ck(18); sec('3','Controle de Horários das Leituras');
   var th=[{header:'Leitura',dataKey:'l'},{header:'Horário',dataKey:'h'},{header:'Técnico',dataKey:'t'},{header:'Situação',dataKey:'s'},{header:'Observação',dataKey:'o'}];
-  var trows2=bat.readings.map(function(r,i){var st=rSt(bat,i);var obs='';if(st==='late'&&i>0&&bat.readings[i-1].ts){var d=Math.round((+new Date(r.ts)-+new Date(bat.readings[i-1].ts))/60000);obs=d+'min após anterior';}
+  var trows2=bat.readings.map(function(r,i){var st=rSt(bat,i);var obs='';if(st==='late'&&i>0&&bat.readings[i-1].ts){var d=Math.round((parseTs(r.ts)-parseTs(bat.readings[i-1].ts))/60000);obs=d+'min após anterior';}
     return{l:'Leitura '+(i+1),h:r.ts?fmtTs(r.ts):'—',t:r.tecnico||'—',s:!r.ts?'PENDENTE':st==='ok'?'NO PRAZO':'ATRASADA',o:obs,_st:st,_reg:!!r.ts};});
   doc.autoTable({startY:y,columns:th,body:trows2,theme:'grid',
     styles:{fontSize:9,textColor:[20,20,20],fillColor:[255,255,255],lineColor:[210,210,210],lineWidth:0.2,cellPadding:2,font:'helvetica'},
@@ -2741,38 +2838,10 @@ function addTech(){var n=document.getElementById('techNm').value.trim();if(!n){t
 function removeTech(i){showConfirmModal('Remover técnico?','',function(){db.tecnicos.splice(i,1);saveDB();renderTechs();toast('Técnico removido.');});}
 function renderTechs(){var l=document.getElementById('techList');if(!db.tecnicos.length){l.innerHTML='<div class="empty">Nenhum técnico cadastrado.</div>';return;}l.innerHTML='';db.tecnicos.forEach(function(t,i){var d=document.createElement('div');d.className='eitem';d.innerHTML='<div style="font-weight:500">'+t.nome+'</div><button class="btn sm rd" onclick="removeTech('+i+')">Remover</button>';l.appendChild(d);});}
 
-// ── REGIMES CRUD ───────────────────────────────────────────────────
-function _regimeDurH(){var nm=(document.getElementById('regNm').value||'').trim();var m=nm.match(/(\d+(?:[.,]\d+)?)/);return m?parseFloat(m[1].replace(',','.')):0;}
-function autoFillRegime(){
-  var dur=_regimeDurH();
-  if(dur>0){document.getElementById('regLeit').value=Math.round(dur);calcRegIntervalo();}
-}
-function calcRegIntervalo(){
-  var dur=_regimeDurH();
-  var leit=parseInt(document.getElementById('regLeit').value)||0;
-  var intEl=document.getElementById('regInt');
-  if(dur>0&&leit>0){
-    var auto=Math.round(dur*60/leit);
-    // Only auto-fill if user hasn't manually set it
-    if(!intEl._manual) intEl.value=auto;
-    var min=parseInt(intEl.value)||auto;
-    document.getElementById('regHint').textContent='Duração: '+dur+'h · '+leit+' leituras · intervalo: '+min+'min';
-  }
-}
-function onRegIntManual(){
-  var intEl=document.getElementById('regInt');
-  intEl._manual=true; // user took control
-  calcRegIntervalo();
-}
-
-
 function exportBackup(){
-  // Use Excel if XLSX loaded, else JSON
-  if(typeof XLSX!=='undefined'&&XLSX!==null&&XLSX.utils){
-    exportarFullXLSX();
-  } else {
-    exportBackupJSON();
-  }
+  // Backup restaurável = JSON (o importBackup só aceita .json).
+  // O Excel completo continua disponível via exportarFullXLSX / botão Excel.
+  exportBackupJSON();
 }
 function exportBackupJSON(){
   var blob=new Blob([JSON.stringify(db,null,2)],{type:'application/json'});
@@ -2993,7 +3062,10 @@ window.__bootApp = function(){
     window._fbGetDoc(window._fbDoc(window._fbDb,'awm','state'))
       .then(function(snap){
         if(snap.exists()){
-          try{ _bootWithData(JSON.parse(snap.data().payload||'{}')); return; }catch(e){}
+          try{
+            if(typeof snap.data().rev==='number') _rev=snap.data().rev;
+            _bootWithData(JSON.parse(snap.data().payload||'{}')); return;
+          }catch(e){}
         }
         // Documento ainda nao existe na nuvem — usa localStorage
         try{ var _d8=localStorage.getItem('awm8'); _bootWithData(_d8?JSON.parse(_d8):{}); }catch(e){ _bootWithData({}); }
@@ -3289,7 +3361,7 @@ h4{color:var(--am);font-size:13px;letter-spacing:.1em;text-transform:uppercase;m
 &lt;div class=&quot;chap&quot;&gt;
   &lt;div class=&quot;chap-hdr&quot;&gt;&lt;span class=&quot;chap-num&quot;&gt;Cap. 9&lt;/span&gt;&lt;span class=&quot;chap-title&quot;&gt;Backup e Dados&lt;/span&gt;&lt;/div&gt;
   &lt;div class=&quot;chap-body&quot;&gt;
-    &lt;div class=&quot;chap-intro&quot;&gt;Os dados ficam no navegador de cada dispositivo (localStorage). Faça backup regularmente.&lt;/div&gt;
+    &lt;div class=&quot;chap-intro&quot;&gt;Os dados são sincronizados na nuvem (Firebase) entre todos os dispositivos conectados, com cópia local no navegador (localStorage) para uso offline. Mesmo assim, faça backup regularmente.&lt;/div&gt;
     &lt;div class=&quot;alert warn&quot;&gt;&lt;strong&gt;⚠ Atenção:&lt;/strong&gt; Limpar o histórico/cache do navegador apaga todos os dados. Use um dispositivo fixo para cada técnico e faça backups periódicos.&lt;/div&gt;
     &lt;div class=&quot;step&quot;&gt;&lt;div class=&quot;step-n&quot;&gt;1&lt;/div&gt;&lt;div class=&quot;step-body&quot;&gt;&lt;div class=&quot;step-title&quot;&gt;Exportar backup (Excel)&lt;/div&gt;&lt;div class=&quot;step-desc&quot;&gt;Acesse a aba &lt;strong&gt;Relatório → Exportar Excel/CSV&lt;/strong&gt;. Gera um arquivo .xlsx com 3 abas: Baterias, Leituras e Auditoria. Se a biblioteca não carregar, exporta como .csv.&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
     &lt;div class=&quot;step&quot;&gt;&lt;div class=&quot;step-n&quot;&gt;2&lt;/div&gt;&lt;div class=&quot;step-body&quot;&gt;&lt;div class=&quot;step-title&quot;&gt;Importar backup&lt;/div&gt;&lt;div class=&quot;step-desc&quot;&gt;Clique em &lt;strong&gt;⬆ Importar&lt;/strong&gt; no topo do sistema. Selecione o arquivo .json de backup. Os dados atuais serão substituídos — uma confirmação é exibida antes.&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
